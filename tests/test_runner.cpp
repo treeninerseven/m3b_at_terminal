@@ -26,6 +26,7 @@ uint32_t pendingFlags = 0;
 std::string subnet = "FD00000000000000";
 std::vector<std::string> commands;
 bool missingReply = false, simulateOverflow = false;
+bool hardwareEdges = false;
 RfRxStats stats = {};
 void reply(const std::string &s, uint32_t delay = 2) {
   for (size_t i = 0; i < s.size(); ++i) replies.push_back({ticks + delay + uint32_t(i / chunkWidth), uint8_t(s[i])});
@@ -73,15 +74,18 @@ void respond() {
     char hex[9]; snprintf(hex, sizeof(hex), "%08X", pendingFlags);
     reply(std::string("0\r\n-MAC_CHG_PEND_UL_CTRL:4\t") + hex + "\r\n");
   }
-  else if (command == "AT-MTRX?\x1A\r") reply("MTRX:245\r\n0\r\n");
+  else if (command == "AT-MTRX?\x1A\r") reply(hardwareEdges ? "MTRX:242\r\n0\r\n" : "MTRX:245\r\n0\r\n");
   else if (command.find("AT-MALO=") == 0) {
     if (attached) info(-4);
     else { attached = true; reply("-MAC_ATTACHSTATE:2\r\n-MAC_SHORTADDRESS:2\t1234\r\n-MAC_LINKOPTIONS:2\t0000\r\n0\r\n"); }
   } else if (command == "AT-MDLO\r") {
-    attached = false; reply("0\r\n"); reply("-MAC_ATTACHSTATE:0\r\n", 20);
+    const bool wasAttached = attached;
+    attached = false; reply("0\r\n");
+    if (!hardwareEdges || wasAttached) reply("-MAC_ATTACHSTATE:0\r\n", 20);
   } else if (command.find("AT-MTRX=") == 0 || command.find("AT-TU=") == 0 ||
              command.find("AT-TB=") == 0 || command.find("AT-MTAOA=") == 0) {
     if (command.find("AT-MTRX=") == 0 && !attached) info(-3);
+    else if (hardwareEdges && command.find("AT-MTRX=") == 0 && value() > 242) info(-1);
     else {
       const bool bidi = command.find("AT-TB=") == 0 || command.find("AT-MTAOA=") == 0 ||
         (command.find("AT-MTRX=") == 0 && (pendingFlags & 4));
@@ -135,6 +139,7 @@ int main(int argc, char **argv) {
   if (argc > 1) chunkWidth = std::atoi(argv[1]);
   if (argc > 2 && std::string(argv[2]) == "missing") missingReply = true;
   if (argc > 2 && std::string(argv[2]) == "overflow") simulateOverflow = true;
+  if (argc > 2 && std::string(argv[2]) == "hardware_edges") hardwareEdges = true;
   runAtTests();
   if (!missingReply && !simulateOverflow) {
     assert(commands.size() >= 65);
@@ -146,8 +151,15 @@ int main(int argc, char **argv) {
     assert(transcript.find("end_to_end=NOT_VERIFIED") != std::string::npos);
     assert(transcript.find("stopped=0") != std::string::npos);
     assert(transcript.find("SUITE_END cases=67 not_run=0") != std::string::npos);
-    assert(transcript.find("SUMMARY PASS=60") != std::string::npos);
-    assert(transcript.find("SUMMARY FAIL=7") != std::string::npos);
+    assert(transcript.find(hardwareEdges ? "SUMMARY PASS=61" : "SUMMARY PASS=60") != std::string::npos);
+    assert(transcript.find(hardwareEdges ? "SUMMARY FAIL=6" : "SUMMARY FAIL=7") != std::string::npos);
+    if (hardwareEdges) {
+      assert(transcript.find("available=242 expect_capacity_error=1") != std::string::npos);
+      assert(transcript.find("RESULT case=54 verdict=PASS") != std::string::npos);
+      assert(transcript.find("MDLO omitted optional state event") != std::string::npos);
+      assert(transcript.find("RESULT case=61 verdict=FAIL") != std::string::npos); // Late state must still be detected.
+      assert(transcript.find("RESULT case=67 verdict=PASS") != std::string::npos);
+    }
     assert(transcript.find("value=1 payload_length=0\r\nTIME") != std::string::npos);
     assert(transcript.find("local_job_closed=1 z_last=0 a_last=0 require_class_a=1") != std::string::npos);
     runAtFinalTest(false); runAtFinalTest(true);
@@ -164,7 +176,7 @@ int main(int argc, char **argv) {
     assert(transcript.find("stopped=1") != std::string::npos);
   }
   const std::string path = "/tmp/mioty-v3-sim-" + std::to_string(chunkWidth) +
-    (missingReply ? "-missing" : simulateOverflow ? "-overflow" : "") + ".log";
+    (missingReply ? "-missing" : simulateOverflow ? "-overflow" : hardwareEdges ? "-hardware-edges" : "") + ".log";
   std::ofstream(path) << transcript;
   std::cout << "Runner + actual C client: " << commands.size() << " transactions, log " << path << '\n';
 }

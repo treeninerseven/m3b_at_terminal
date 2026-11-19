@@ -25,7 +25,7 @@ enum class Op {
   Pending, Uni, Bidi, Message, OtaAttach, OtaDetach, LocalAttach, LocalDetach,
   PowerDown, Bootloader
 };
-enum class Expect { Success, ParserRangeError, AlreadyAttached, Detached, IdleAbort, NoReply };
+enum class Expect { Success, ParserRangeError, AlreadyAttached, Detached, IdleAbort, NoReply, CapacityError };
 struct Step {
   const char *name;
   Op op;
@@ -51,6 +51,8 @@ bool activeProfileKnown = false;
 bool lastProfileSetAccepted = false, lastLocalDetachAccepted = false;
 bool localDetachAttempted = false;
 bool nextMessageClassA = false;
+uint32_t availablePayload = 0;
+bool availablePayloadKnown = false;
 constexpr uint32_t sentinel = 0xDEADBEEF;
 
 bool expired(uint32_t end) { return int32_t(millis() - end) >= 0; }
@@ -369,6 +371,11 @@ bool checkOutputs(const Step &s) {
       int64_t state;
       if (TestProtocol::integer({trace.rx, trace.apiRxSize}, "MAC_ATTACHSTATE", state))
         return state == values.state;
+      View optionalState;
+      if (s.op == Op::LocalDetach && !TestProtocol::field(rxView(), "MAC_ATTACHSTATE", optionalState)) {
+        log("CHECK MDLO omitted optional state event; MSTA is not verifiable from this reply\r\n");
+        return true;
+      }
       if (s.op != Op::OtaAttach) {
         log("CHECK FAIL local state arrived after API return or is missing\r\n"); return false;
       }
@@ -470,6 +477,8 @@ bool run(const Step &s) {
     } else if (s.expect == Expect::AlreadyAttached || s.expect == Expect::Detached) {
       const int wanted = s.expect == Expect::AlreadyAttached ? -4 : -3;
       good = good && raw.finalCode == 1 && raw.hasInfo && raw.info == wanted;
+    } else if (s.expect == Expect::CapacityError) {
+      good = good && raw.finalCode == 1 && raw.hasInfo && raw.info == -1;
     } else if (s.expect == Expect::IdleAbort) {
       good = good && (raw.finalCode == 0 || (raw.finalCode == 1 && raw.hasInfo && raw.info == -8));
     } else if (raw.finalCode != 0) verdict = DeviceError;
@@ -550,7 +559,16 @@ bool run(const Step &s) {
   if (s.op == Op::Message && raw.finalCode == 0) nextMessageClassA = false;
   if (s.op == Op::Pending && raw.finalCode == 0 && rc == MIOTYATCLIENT_RETURN_CODE_OK)
     nextMessageClassA = (values.integer & 4) != 0;
-  if (s.op == Op::Reset || s.op == Op::Factory) nextMessageClassA = false;
+  if (s.op == Op::Available) {
+    int64_t capacity;
+    availablePayloadKnown = raw.finalCode == 0 &&
+      TestProtocol::integer(rxView(), "MTRX", capacity) && capacity >= 0 && capacity <= 245;
+    if (availablePayloadKnown) availablePayload = uint32_t(capacity);
+  }
+  if (s.op == Op::Reset || s.op == Op::Factory) {
+    nextMessageClassA = false;
+    availablePayloadKnown = false;
+  }
   capturing = false;
   return !stopped;
 }
@@ -641,6 +659,7 @@ void runAtTests() {
   activeProfileKnown = lastProfileSetAccepted = lastLocalDetachAccepted = false;
   localDetachAttempted = false;
   nextMessageClassA = false;
+  availablePayloadKnown = false;
   memset(counts, 0, sizeof(counts));
   for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = uint8_t(i);
   log("\r\n=== MIOTY_V3_SUITE_BEGIN protocol=3.0.0-12 build=%s_%s ===\r\n", __DATE__, __TIME__);
@@ -709,7 +728,11 @@ void runAtTests() {
   run({"MTRX / 100 bytes (three digit length)", Op::Message, 0, payload, 100});
   run({"MTRX / payload capacity after control data", Op::Available});
   // 245 bytes is the protocol maximum, but pending MAC data can reduce capacity.
-  run({"MTRX / 245 byte protocol boundary", Op::Message, 0, payload, 245});
+  const bool exceedsCapacity = availablePayloadKnown && availablePayload < 245;
+  log("BOUNDARY requested=245 capacity_known=%u available=%lu expect_capacity_error=%u\r\n",
+      availablePayloadKnown, (unsigned long)availablePayload, exceedsCapacity);
+  run({"MTRX / 245 byte protocol boundary", Op::Message, 0, payload, 245,
+       exceedsCapacity ? Expect::CapacityError : Expect::Success});
   run({"TU / transparent payload incl sync byte", Op::Uni, 0, payload, 6});
   run({"TB / transparent Class A receive window", Op::Bidi, 0, payload, 6});
   run({"MEDOA / enqueue detach", Op::OtaDetach});

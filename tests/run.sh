@@ -21,3 +21,4 @@ for width in 1 7 30; do
 done
 ASAN_OPTIONS=detect_leaks=0 "$out/runner" 7 missing
 ASAN_OPTIONS=detect_leaks=0 "$out/runner" 30 overflow
+ASAN_OPTIONS=detect_leaks=0 "$out/runner" 7 hardware_edges
