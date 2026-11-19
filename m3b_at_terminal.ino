@@ -1,22 +1,29 @@
-// USB-C line terminal -> RF module UART. RF replies are forwarded unchanged.
+// MIOTY v3 client hardware tests plus the original USB/RF terminal.
 #include <Arduino.h>
 #include <usbd_cdc_if.h>
 #include "TerminalCore.h"
 #include "RfDmaRx.h"
+#include "AtTestRunner.h"
+#include "TestConfig.h"
+#include "FirmwareBuffers.h"
 
 #if !defined(USBCON) || !defined(USBD_USE_CDC)
-#error "Enable USB CDC support, or select build-flash menu 14."
+#error "Enable USB CDC support, or build this sketch using build.py."
 #endif
 
 Uart SerialMioty(PC_11, PC_10); // RX, TX
-constexpr uint32_t RF_BAUD = 921600, USB_BAUD = 115200;
-constexpr size_t LINE_SIZE = 1024, OUTPUT_SIZE = 4096;
+constexpr uint32_t RF_BAUD = TestConfig::rfBaud, USB_BAUD = 115200;
 static_assert(SERIAL_RX_BUFFER_SIZE >= 1024, "Keep build_opt.h with this sketch");
-char line[LINE_SIZE];
-uint8_t tx[LINE_SIZE], output[OUTPUT_SIZE];
+FirmwareBuffers firmwareBuffers = {};
+char (&line)[LINE_SIZE] = firmwareBuffers.terminal.line;
+uint8_t (&tx)[LINE_SIZE] = firmwareBuffers.terminal.tx;
+uint8_t (&output)[OUTPUT_SIZE] = firmwareBuffers.terminal.output;
 size_t lineSize = 0, txSize = 0, txOffset = 0;
 size_t outputHead = 0, outputTail = 0;
 bool discardLine = false, previousCR = false, wasOpen = false;
+bool autoStarted = false;
+uint32_t openedAt = 0;
+int requestedTest = 0;
 
 void serviceRf() {
   if (!SerialMioty) return;
@@ -47,8 +54,14 @@ void serviceOutput() {
 
 void finishLine() {
   if (!discardLine && lineSize && SerialMioty && txOffset == txSize) {
-    txSize = AtTerminal::decode(line, lineSize, tx, sizeof(tx));
-    txOffset = 0;
+    line[lineSize] = 0;
+    if (!strcmp(line, "RUN")) requestedTest = 1;
+    else if (!strcmp(line, "PD")) requestedTest = 2;
+    else if (!strcmp(line, "SBTL")) requestedTest = 3;
+    else {
+      txSize = AtTerminal::decode(line, lineSize, tx, sizeof(tx));
+      txOffset = 0;
+    }
   }
   lineSize = 0; discardLine = false;
 }
@@ -95,7 +108,22 @@ void loop() {
   if (open != wasOpen) {
     lineSize = 0; discardLine = previousCR = false;
     wasOpen = open;
+    if (open) openedAt = millis();
   }
   if (open) serviceInput();
   serviceOutput();
+  if (open && !autoStarted && millis() - openedAt >= 2000) {
+    autoStarted = true;
+    if (TestConfig::autoRun && !requestedTest) requestedTest = 1;
+  }
+  if (open && requestedTest && txOffset == txSize && outputHead == outputTail) {
+    const int task = requestedTest;
+    requestedTest = 0;
+    autoStarted = true;
+    lineSize = 0;
+    if (task == 1) runAtTests();
+    else runAtFinalTest(task == 3);
+    firmwareBuffers.terminal = {};
+    txSize = txOffset = outputHead = outputTail = 0;
+  }
 }

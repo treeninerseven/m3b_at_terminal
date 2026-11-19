@@ -1,39 +1,165 @@
-# 菜单 14：基本 AT 终端
+# M3Board：MIOTY V3 客户端自动测试
 
-通过电脑 USB 终端输入 AT 命令，STM32 转发给 RF 模块，并原样显示模块回复。
-固定使用内部 HSI16 → PLL → 32 MHz，RF 为 PC10 TX / PC11 RX、921600 8N1，
-电脑 USB CDC 终端设为 115200。
+这份固件直接调用上级目录 `mioty_at_client_c` 的真实 C 接口，在开发板上执行串口测试。
+依据根目录 `MIOTY_EP_AT_Protocol_v3.0.0-12.md`（V3.0.0-12 Draft），覆盖现有 29 个公开 API：
+27 个进入自动流程，`AT-PD` / `AT-SBTL` 分别手动触发。
+未修改 C 客户端，便于观察其现有实现的问题。
 
-## 使用
+这是用户授权的**专用测试板配置**：自动执行 ATZ、DEF、设置公开测试密钥、本地/空中入网、退网及无线发送。
+没有网关，日志中的 PASS 只证明该项串口/API 检查；后台接收、空中入网成功、ACK、实际下行均不作为已通过。
 
-输入命令后回车，例如：
+## 直接使用
 
-    ATI
-    AT-MEUI?
-    AT-MAI?
+已编译固件：`build/m3b_v3_autotest.bin`。编译记录：`build/manifest.json`。
 
-CR、LF、CRLF 均可结束一行，固件在命令末尾添加一个 CR。
-支持 \t、\x1A、\r、\n、\\ 转义，便于输入包含控制字节的 AT 命令。
-退格可修改当前输入，Ctrl-C 清除当前输入；每条命令等待完整回复后再发送下一条。
-输入上限为 1023 个字符，过长的行或非法转义整行丢弃。
-固件只显示 RF 原始回复，不输出启动提示、收发日志或诊断信息。
+1. 将 bin 复制到电脑，用 STM32CubeProgrammer 经 USB DFU 烧录，地址 `0x08000000`。
+2. 关闭 BOOT，按 RESET。先在电脑上准备好串口日志保存，再打开 USB CDC（115200）。
+3. USB 连接约 2 秒后自动运行一轮，无需逐条输入 AT 命令。测试含数次 RF 模块复位，保持 USB 日志连接。
+4. 等待 `SUITE_END` 和后面的 `SUMMARY`、覆盖说明。常规命令超时 5 秒，无线用例最多等 60 秒，完整流程可能持续数分钟。
+5. 保存整个日志文件。重点搜索 `verdict=FAIL`、`DEVICE_ERROR`、`INCONCLUSIVE`、`NOT_RUN`、`TRANSPORT`。
 
-## 编译和烧录
+USB 中可输入以下本地指令（回车结束）：
 
-项目根目录运行 python3 build-flash.py，选择 14。
-生成 build/linux/at-terminal/m3b_at_terminal.ino.bin。
-本次固件同时保存为 build/linux/at-terminal/m3b_at_terminal_hsi_dma_rx.bin。
-复制到电脑后，用 STM32CubeProgrammer 通过 USB DFU 烧录，起始地址 0x08000000。
-完成后关闭 BOOT，按 RESET，再打开 USB 终端。
+| 指令 | 行为 |
+| --- | --- |
+| `RUN` | 重新自动测试一轮，再次使用/覆盖测试配置 |
+| `PD` | 单独调用 `miotyAtClient_powerDown()`，完整记录发送及后续输出 |
+| `SBTL` | 单独调用 `miotyAtClient_startBootloader()`，完整记录发送及后续输出 |
+| Ctrl-C | 中止正在执行的测试；USB 断开或输出阻塞也会停止测试 |
+| 其它 AT 命令 | 使用原手动转发终端 |
 
-## 文件
+PD 和 SBTL **每次单独测试**，执行后按模块需要复位或断电，再进行下一项。
+无回复不能证明已关机或已进入 bootloader，因此默认结果为 `SENT_UNVERIFIED`，须观察硬件状态。
+RF 模块复位不等于 STM32 开发板复位。
 
-- m3b_at_terminal.ino：USB 输入、按行发送和原始回复转发。
-- TerminalCore.h：转义解码及 CR 结尾。
-- RfDmaRx.cpp / RfDmaRx.h：DMA 循环接收，由 setup 初始化、loop 轮询。
-- ClockConfig.cpp：内部 HSI16 和独立 USB HSI48 时钟。
-- build_opt.h：Arduino 串口接收缓冲区大小。
+原手动终端保留 CR/LF/CRLF 行结束、退格、Ctrl-C，以及 `\t`、`\x1A`、`\r`、`\n`、`\\` 转义。
+输入上限仍为 1023 字符；测试时不输入其它命令，除 Ctrl-C 外的输入会被丢弃。
 
-DMA 使用 DMA1 通道 3、请求 5、2048 字节循环区及其共享中断，通道 2 未使用。
-USB 输出暂满时缓存在内存中，长时间不读取仍可能丢数据。
-编译及 host 测试不替代当前固件的实板验证。
+## 在电脑上保存完整日志
+
+也可在连接开发板的电脑上使用附带脚本（服务器编译不要求电脑重新构建）：
+
+```bash
+python -m pip install pyserial
+python capture_serial.py --port COM5 --output logs/first-run.log
+```
+
+Linux 端口示例 `/dev/ttyACM0`。脚本逐字节保存串口原始日志，不覆盖已有文件。
+想主动开始新一轮并在完整摘要后退出：
+
+```bash
+python capture_serial.py --port COM5 --send RUN --output logs/rerun.log --stop-after-suite
+```
+
+`--send PD`、`--send SBTL` 用于最后的独立测试。普通串口终端的“保存日志”功能同样可用。
+脚本只保存电脑实际收到的字节；USB 未连接时不会启动自动测试，中途断开不保证日志完整，需重新运行。
+
+## 日志内容与判断
+
+每项用例包含：
+
+- 名称、预期结果类别、参数、长度、总耗时、API 耗时和 TX 时刻。
+- 客户端真正发送的完整 `TX`，不是根据参数猜测的命令；独立编码后逐字节比较。
+- 完整 `RX` / `LATE_RX`：按偏移分行，提供 HEX 和保留大小写的转义文本。
+- `RX_TIME`：接收分块的相对时间、偏移、长度。
+- API 数值/名称、输出参数、读取字节数、API 返回时的接收字节数、读取超时次数。
+- 独立解析出的模块最终码、INFO、AT!ERR、MAC_ERR，以及与 API 输出的比较结果。
+- UART 错误、DMA 丢弃字节、DMA 错误、记录溢出、发送失败。
+- 最终判定和整轮统计。API 初始值包含 `0xA5`、`MSTA=255`、计数 `0xDEADBEEF`，用于识别未写入输出。
+
+例如 `TEXT=AT-MTRX=6\t000102030405\x1A\r` 中的 `\t` / `\x1A` / `\r` 分别是实际字节 09 / 1A / 0D。
+`API rc=0` 表示 C 客户端返回 OK；它本身不代表无线操作成功。
+
+| 判定 | 含义 |
+| --- | --- |
+| `PASS` | 本用例的实际命令、回复/API 比较及规定的状态检查符合预期；负向用例预期报错也可 PASS |
+| `FAIL` | 编码、返回码、解析值、预期状态或接收完整性不一致 |
+| `DEVICE_ERROR` | 正向用例收到模块拒绝；错误映射可以正确，但该功能没有验证成功 |
+| `UNSUPPORTED` | 模块明确返回 100 或 INFO:-100；若客户端错误映射仍判 FAIL |
+| `INCONCLUSIVE` | 没有完整回复、无线结束事件缺失、中止，或手册定义歧义无法确定 |
+| `SENT_UNVERIFIED` | PD/SBTL 已交给 UART，硬件状态需人工确认 |
+| `NOT_RUN` | 本轮中止或恢复失败，后续用例未发送 |
+
+RST 按手册不要求最终回复。没有返回码时，客户端仍必须能正确处理；后续 ATI 用例检查模块是否恢复。
+普通命令未结束或无线结束事件缺失时，先记录，再尝试一次 **RST + ATI** 恢复；失败就停止并列出剩余未运行用例。
+恢复后原先的入网/标志前提可能改变，后续状态错误会如实记录。
+
+接收记录每项最多 4096 字节、96 个时间分块；正常命令的全部字节均保存，不受客户端内部 200 字节缓冲区限制。
+超限、UART/DMA 错误都会显式判 FAIL，不把截断记录当作通过。收到持续异常输出时不能声称日志完整。
+串口回调保持客户端要求的 `1..capacity` 实际读取长度和原始 CR/LF，不通过等待拼包来掩盖客户端异步问题。
+
+## 覆盖范围
+
+正常未中断且 nonce 可用时自动执行 **67 项用例**，含 getter/setter、读回、负向测试与清理。
+
+| V3 命令 | 自动测试内容 |
+| --- | --- |
+| AT-RST、ATZ、AT-DEF | 软复位、恢复出厂、可选测试默认配置、后续 ATI 就绪检查 |
+| ATI、AT-LIBV | 信息字符串与原始回复逐字比较，包含大小写 |
+| AT-MEUI | 只读 8 字节 EUI，不测试手册禁止的设置 |
+| AT+IPR | 查询；设置当前 921600，保持已知串口链路 |
+| AT-TXPL | 查询、-3、0、读回、拒绝 ±31；允许硬件量化后的实际功率值 |
+| AT-UM | 查询、0/1、读回、拒绝 2 |
+| AT-UP | 查询、测试区域 profile、读回、拒绝 8 |
+| AT-ZADR | 查询、0/1、读回、拒绝 2 |
+| AT-ABRT | 空闲时 0 或 INFO:-8 均按手册含义处理 |
+| AT-MNWK | 设置 16 字节公开测试密钥；不查询安全原因禁用的密钥读取 |
+| AT-MSN6 | 设置并读取 8 字节 IPv6 前缀 |
+| AT-MCFGF | 脱网设置 0/1；已入网时预期 INFO:-4 |
+| AT-MAI | 初始、已入网、退网、OTA 尝试后的字段与状态 |
+| AT-MPCS | 初始及 MRXO/MEMPF/MEDOA 后的标志；检查对应位 |
+| AT-MTRX? | 可用载荷长度，包含手册示例的 SUB |
+| AT-MTRX | 脱网报错、6/0/100/245 字节、发送已排队的退网请求 |
+| AT-MRXO、AT-MEMPF | 响应标志 0/1、MPF=255、拒绝 256、MPCS 验证 |
+| AT-MALO、AT-MDLO | 2 字节本地入网、重复入网报错、本地退网及 MAI 核对 |
+| AT-TU、AT-TB | 含 sync 首字节的透明发送；TB 接收窗口结束及下行解析 |
+| AT-MTAOA、AT-MEDOA | 新 nonce 空中入网尝试；排队/发送退网请求；无网关不宣称空中成功 |
+| AT-PD、AT-SBTL | 手动独立测试，避免中断自动流程 |
+
+已从当前客户端移除的 v2 命令 MSAD、MPCT、US、ACM、ACK、U、B、UMPF、BMPF、UTPL 不发送。
+Class B/C 与认证命令在 V3 中存在，但本客户端没有接口，因此不计入“现有客户端全部命令”。
+MPCT 输出参数在 v3 未必赋值，日志保留其哨兵值，不将未提供的 v2 计数当作 v3 必须字段。
+245 字节是协议上限；若 MAC 控制字段占空间而模块拒绝，会记录 DEVICE_ERROR，不能等同客户端编码错误。
+
+## 本地测试参数
+
+见 `TestConfig.h`：密钥 `00112233445566778899AABBCCDDEEFF`，短地址 `1234`，IPv6 前缀 `FD00000000000000`，
+profile=0（EU868A），TXPL=0 dBm，ULP 模式；这是公开实验参数。
+测试更改 RF 模块的配置，不尝试读取/恢复原网络密钥。发射前按实际模块和测试地点调整 profile。
+
+MTAOA 的 nonce 是开发板 UID 混合值 + 持久化预约槽号。
+使用 **STM32 自身 data EEPROM 前 1024 字节**中的 256 个一次性槽位；发送前先写入并读回验证，
+重启、再次 RUN 不重复使用槽位，不自动擦除。无可用槽位或写入失败会明确跳过 MTAOA。
+不要清除该 EEPROM 后继续向同一网络复用这些 nonce；它是实验用预约机制，不是产品密钥管理。
+RF 模块 ATZ 不会擦除 STM32 的 EEPROM。
+
+## 在服务器重新构建
+
+在本目录运行：
+
+```bash
+python3 build.py
+bash tests/run.sh
+```
+
+构建脚本复用同级 `mioty-m3board/.tools/linux` 中已安装的 Arduino CLI、STM32 core 3.0.0 和工具链，
+通过 `--library` 链接上级 `mioty_at_client_c`，不复制、修改客户端源码或原固件项目。
+可使用 `--tools /path/to/existing/tools`、`--client /path/to/mioty_at_client_c` 指定其它已有环境。
+脚本只构建，不自动烧录/安装工具/推送。bin、编译目录和日志均不提交 Git。
+manifest 包含客户端 Git 版本、实际源码 SHA-256、固件 SHA-256 及完整编译命令；串口页首也打印客户端版本。
+
+硬件仍为 STM32L072RBT6，HSI16 → PLL → 32 MHz；RF PC10 TX / PC11 RX，921600 8N1；USB CDC 115200。
+保留 DMA1 通道 3、请求 5、2048 字节循环接收，在所有阻塞等待和日志输出期间持续轮询。
+手动终端与自动测试共用静态 RAM，退出测试后重置终端缓冲，避免 20 KiB RAM 超出容量。
+
+## 已执行验证的边界
+
+`tests/run.sh` 将 **同一份 AtTestRunner.cpp + 当前真实 C 客户端** 接到主机串口模拟器，
+以 1/7/30 字节节奏运行两轮、分别测试 PD/SBTL，并检查断续异步事件、无回复恢复、记录溢出和 nonce 不复用。
+另外检查独立解析器边界，启用 ASan/UBSan。
+
+重放中特意提供手册式无回复 RST、大小写混合 ATI、可选功能结果 100、最终码后的延迟 MDLO 状态，
+验证测试器会暴露客户端等待回复、字符串改写、100 映射及异步状态遗漏等问题。
+这些模拟日志是测试器验证数据，不是开发板实测记录。
+
+编译和主机检查不能证明实板 UART 时序、无线发射、网关接收、OTA 入网或下行成功；需烧录后保存硬件日志判断。
