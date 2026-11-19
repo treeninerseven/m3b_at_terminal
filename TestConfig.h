@@ -12,7 +12,7 @@ constexpr uint8_t networkKey[16] = {
 };
 constexpr uint8_t shortAddress[2] = {0x12, 0x34};
 constexpr uint8_t subnet[8] = {0xFD, 0, 0, 0, 0, 0, 0, 0};
-constexpr uint32_t profile = 0; // EU868A, manual 4.2.21. Set for your test hardware.
+constexpr int32_t profile = -1; // Reapply the queried profile. 0..7 explicitly selects a test profile.
 constexpr bool gatewayAvailable = false;
 constexpr bool autoRun = true;
 }

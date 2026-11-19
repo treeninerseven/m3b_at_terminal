@@ -148,4 +148,24 @@ inline bool event(View input, const char *key, int expected) {
   }
   return false;
 }
+
+inline bool lastInteger(View input, const char *key, int64_t &out) {
+  size_t offset = 0;
+  View line;
+  bool found = false;
+  while (nextLine(input, offset, line)) {
+    int64_t value;
+    if (integer({line.data, line.size + 2}, key, value)) { out = value; found = true; }
+  }
+  return found;
+}
+
+inline bool radioComplete(View input, bool requireClassA) {
+  int64_t z = -1, a = -1;
+  const bool hasZ = lastInteger(input, "Z_ACTIVE", z);
+  const bool hasA = lastInteger(input, "A_ACTIVE", a);
+  // MRXO=0 removes the response bit, but still opens the next RX window.
+  // A normal MTRX may therefore still be receiving after Z_ACTIVE:0.
+  return hasZ && z == 0 && ((requireClassA || hasA) ? hasA && a == 0 : true);
+}
 }

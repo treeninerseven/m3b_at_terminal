@@ -28,6 +28,11 @@ int main() {
   assert(!number(view(""), numberValue));
   assert(event(view("0\r\n*Z_ACTIVE:1\r\n*Z_ACTIVE:0\r\n"), "Z_ACTIVE", 0));
   assert(!event(view("0\r\n*Z_ACTIVE:1\r\n"), "Z_ACTIVE", 0));
+  assert(radioComplete(view("0\r\nZ_ACTIVE:1\r\nZ_ACTIVE:0\r\n"), false));
+  assert(!radioComplete(view("0\r\nZ_ACTIVE:0\r\nA_ACTIVE:1\r\n"), false));
+  assert(!radioComplete(view("0\r\nZ_ACTIVE:0\r\n"), true));
+  assert(radioComplete(view("0\r\nZ_ACTIVE:0\r\nA_ACTIVE:1\r\nA_ACTIVE:0\r\n"), true));
+  assert(!radioComplete(view("0\r\nZ_ACTIVE:0\r\nA_ACTIVE:0\r\nA_ACTIVE:1\r\n"), false));
   View text;
   assert(field(view("-I:Fraunhofer;MixedCase\r\n0\r\n"), "I", text));
   assert(text.equals("Fraunhofer;MixedCase"));

@@ -24,6 +24,20 @@ bool discardLine = false, previousCR = false, wasOpen = false;
 bool autoStarted = false;
 uint32_t openedAt = 0;
 int requestedTest = 0;
+bool bannerPending = false;
+
+void queueBanner() {
+  const char *message = autoStarted ?
+    "\r\n[M3B V3 TEST READY] Enter RUN to repeat; PD / SBTL require separate RF reset or power cycle.\r\n" :
+    "\r\n[M3B V3 TEST READY] Automatic tests start shortly. Enter RUN to start now.\r\n";
+  const size_t length = strlen(message);
+  const size_t used = (outputHead + OUTPUT_SIZE - outputTail) % OUTPUT_SIZE;
+  if (length >= OUTPUT_SIZE - used) return;
+  for (size_t i = 0; i < length; ++i) {
+    output[outputHead] = message[i]; outputHead = (outputHead + 1) % OUTPUT_SIZE;
+  }
+  bannerPending = false;
+}
 
 void serviceRf() {
   if (!SerialMioty) return;
@@ -108,8 +122,9 @@ void loop() {
   if (open != wasOpen) {
     lineSize = 0; discardLine = previousCR = false;
     wasOpen = open;
-    if (open) openedAt = millis();
+    if (open) { openedAt = millis(); bannerPending = true; }
   }
+  if (open && bannerPending) queueBanner();
   if (open) serviceInput();
   serviceOutput();
   if (open && !autoStarted && millis() - openedAt >= 2000) {
@@ -121,7 +136,11 @@ void loop() {
     requestedTest = 0;
     autoStarted = true;
     lineSize = 0;
-    if (task == 1) runAtTests();
+    if (task == 1) {
+      runAtTests();
+      // A failed log connection must not consume the one automatic run forever.
+      if (atTestLogInterrupted()) { autoStarted = false; openedAt = millis(); }
+    }
     else runAtFinalTest(task == 3);
     firmwareBuffers.terminal = {};
     txSize = txOffset = outputHead = outputTail = 0;

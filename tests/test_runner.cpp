@@ -21,7 +21,7 @@ struct Byte { uint32_t at; uint8_t data; };
 std::deque<Byte> replies;
 unsigned chunkWidth = 30;
 bool attached = false;
-int txPower = 0, mode = 0, profile = 0, rate = 0;
+int txPower = 0, mode = 0, profile = 1, rate = 0;
 uint32_t pendingFlags = 0;
 std::string subnet = "FD00000000000000";
 std::vector<std::string> commands;
@@ -83,9 +83,13 @@ void respond() {
              command.find("AT-TB=") == 0 || command.find("AT-MTAOA=") == 0) {
     if (command.find("AT-MTRX=") == 0 && !attached) info(-3);
     else {
-      const bool bidi = command.find("AT-TB=") == 0 || command.find("AT-MTAOA=") == 0;
+      const bool bidi = command.find("AT-TB=") == 0 || command.find("AT-MTAOA=") == 0 ||
+        (command.find("AT-MTRX=") == 0 && (pendingFlags & 4));
       reply("0\r\n"); reply("*Z_ACTIVE:1\r\n*Z_ACTIVE:0\r\n", 20);
-      if (bidi) reply("*A_ACTIVE:1\r\n*A_DATA:0\t\x1A\r\n*A_ACTIVE:0\r\n", 60);
+      if (bidi) {
+        reply("*A_ACTIVE:1\r\n", 60);
+        reply("*A_DATA:0\t\x1A\r\n*A_ACTIVE:0\r\n", 2000);
+      }
       pendingFlags = 0;
     }
   } else if (command.find("AT-MRXO=") == 0 || command.find("AT-MEMPF=") == 0) {
@@ -144,6 +148,8 @@ int main(int argc, char **argv) {
     assert(transcript.find("SUITE_END cases=67 not_run=0") != std::string::npos);
     assert(transcript.find("SUMMARY PASS=60") != std::string::npos);
     assert(transcript.find("SUMMARY FAIL=7") != std::string::npos);
+    assert(transcript.find("value=1 payload_length=0\r\nTIME") != std::string::npos);
+    assert(transcript.find("local_job_closed=1 z_last=0 a_last=0 require_class_a=1") != std::string::npos);
     runAtFinalTest(false); runAtFinalTest(true);
     assert(transcript.find("verdict=SENT_UNVERIFIED") != std::string::npos);
     // Run again and verify EEPROM reservation produces a new MTAOA nonce.

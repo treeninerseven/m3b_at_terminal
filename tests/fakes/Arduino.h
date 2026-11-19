@@ -9,6 +9,12 @@ struct FakeRegisters { uint32_t ISR = USART_ISR_TC; };
 struct UART_HandleTypeDef { FakeRegisters *Instance; };
 struct Uart {
   bool usb = false;
+  Uart() = default;
+  explicit Uart(bool isUsb) : usb(isUsb) {}
+  Uart(int, int) {}
+  void begin(uint32_t, int = 0) {}
+  void dtr(bool) {}
+  explicit operator bool() const { return true; }
   int available();
   int read();
   int availableForWrite() { return 64; }

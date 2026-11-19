@@ -46,6 +46,11 @@ unsigned recoveries = 0;
 unsigned caseNumber = 0, counts[6] = {};
 unsigned notRun = 0;
 uint8_t payload[245], nonce[8];
+uint32_t activeProfile = 0;
+bool activeProfileKnown = false;
+bool lastProfileSetAccepted = false, lastLocalDetachAccepted = false;
+bool localDetachAttempted = false;
+bool nextMessageClassA = false;
 constexpr uint32_t sentinel = 0xDEADBEEF;
 
 bool expired(uint32_t end) { return int32_t(millis() - end) >= 0; }
@@ -138,6 +143,7 @@ bool radio(Op op) {
   return op == Op::Message || op == Op::Uni || op == Op::Bidi || op == Op::OtaAttach;
 }
 bool bidi(Op op) { return op == Op::Bidi || op == Op::OtaAttach; }
+bool needsClassA(const Step &s) { return bidi(s.op) || (s.op == Op::Message && nextMessageClassA); }
 
 void startCapture(uint32_t timeout) {
   // All preceding RF bytes must already have been logged by settle().
@@ -159,8 +165,7 @@ void settle(const Step &s) {
     if (!onAir) {
       if (millis() - started >= minWait && millis() - trace.lastRx >= 200) break;
     } else {
-      const bool complete = bidi(s.op) ? TestProtocol::event(rxView(), "A_ACTIVE", 0) :
-        TestProtocol::event(rxView(), "Z_ACTIVE", 0);
+      const bool complete = TestProtocol::radioComplete(rxView(), needsClassA(s));
       if (complete && millis() - trace.lastRx >= 250) break;
     }
   }
@@ -474,13 +479,30 @@ bool run(const Step &s) {
           memchr(baudField.data, ',', baudField.size)) {
         log("CHECK manual 4.1.1 ambiguously shows a baud list for IPR?; scalar API output is not verifiable\r\n");
         verdict = Inconclusive;
-      } else good = checkOutputs(s) && good;
+      } else {
+        Step checked = s;
+        if (s.op == Op::ProfileGet && s.value >= 0 && !lastProfileSetAccepted) {
+          checked.value = -1;
+          verdict = Inconclusive;
+          log("CHECK preceding profile setter was rejected; only raw/API parsing can be verified\r\n");
+        }
+        if (s.op == Op::AttachInfo && s.value == 0 && localDetachAttempted && !lastLocalDetachAccepted &&
+            TestProtocol::event(rxView(), "MAC_ATTACHSTATE", 2)) {
+          checked.value = -1;
+          verdict = Inconclusive;
+          log("CHECK preceding local detach did not succeed; detached prerequisite is not met\r\n");
+        }
+        good = checkOutputs(checked) && good;
+      }
     }
   }
   if (radio(s.op) && raw.finalCode == 0) {
-    const bool complete = TestProtocol::event(rxView(), bidi(s.op) ? "A_ACTIVE" : "Z_ACTIVE", 0);
-    log("RADIO local_job_closed=%u gateway_available=%u end_to_end=NOT_VERIFIED\r\n",
-        complete, TestConfig::gatewayAvailable);
+    const bool complete = TestProtocol::radioComplete(rxView(), needsClassA(s));
+    int64_t z = -1, a = -1;
+    TestProtocol::lastInteger(rxView(), "Z_ACTIVE", z);
+    TestProtocol::lastInteger(rxView(), "A_ACTIVE", a);
+    log("RADIO local_job_closed=%u z_last=%ld a_last=%ld require_class_a=%u gateway_available=%u end_to_end=NOT_VERIFIED\r\n",
+        complete, long(z), long(a), needsClassA(s), TestConfig::gatewayAvailable);
     if (!complete && verdict == Pass) verdict = Inconclusive;
     if (s.op == Op::OtaAttach) {
       // The final state can be an asynchronous event; report every one in raw trace.
@@ -512,8 +534,23 @@ bool run(const Step &s) {
   log("RESULT case=%u verdict=%s\r\n", caseNumber, verdictNames[verdict]);
   // Stop after uncertain framing: never let a late response satisfy the next case.
   if (raw.finalCode < 0 && s.op != Op::Reset && s.expect != Expect::NoReply) desynchronized = true;
-  if (radio(s.op) && raw.finalCode == 0 &&
-      !TestProtocol::event(rxView(), bidi(s.op) ? "A_ACTIVE" : "Z_ACTIVE", 0)) desynchronized = true;
+  if (radio(s.op) && raw.finalCode == 0 && !TestProtocol::radioComplete(rxView(), needsClassA(s)))
+    desynchronized = true;
+  if (raw.finalCode == 1 && raw.hasInfo && raw.info == -7) desynchronized = true;
+  if (s.op == Op::ProfileGet && raw.finalCode == 0 && rc == MIOTYATCLIENT_RETURN_CODE_OK) {
+    activeProfile = values.integer;
+    activeProfileKnown = activeProfile <= 7;
+  }
+  if (s.op == Op::ProfileSet) lastProfileSetAccepted = raw.finalCode == 0;
+  if (s.op == Op::LocalDetach) {
+    localDetachAttempted = true;
+    lastLocalDetachAccepted = raw.finalCode == 0;
+  }
+  if (s.op == Op::Response && raw.finalCode == 0) nextMessageClassA = true;
+  if (s.op == Op::Message && raw.finalCode == 0) nextMessageClassA = false;
+  if (s.op == Op::Pending && raw.finalCode == 0 && rc == MIOTYATCLIENT_RETURN_CODE_OK)
+    nextMessageClassA = (values.integer & 4) != 0;
+  if (s.op == Op::Reset || s.op == Op::Factory) nextMessageClassA = false;
   capturing = false;
   return !stopped;
 }
@@ -601,6 +638,9 @@ void runAtTests() {
   stopped = logLost = capturing = false;
   desynchronized = false; recoveries = 0;
   caseNumber = notRun = 0;
+  activeProfileKnown = lastProfileSetAccepted = lastLocalDetachAccepted = false;
+  localDetachAttempted = false;
+  nextMessageClassA = false;
   memset(counts, 0, sizeof(counts));
   for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = uint8_t(i);
   log("\r\n=== MIOTY_V3_SUITE_BEGIN protocol=3.0.0-12 build=%s_%s ===\r\n", __DATE__, __TIME__);
@@ -631,8 +671,14 @@ void runAtTests() {
   run({"UM / standard", Op::ModeSet, 0});
   run({"UM / reject 2", Op::ModeSet, 2, nullptr, 0, Expect::ParserRangeError});
   run({"UP / query", Op::ProfileGet, -1});
-  run({"UP / laboratory profile", Op::ProfileSet, int32_t(TestConfig::profile)});
-  run({"UP / readback", Op::ProfileGet, int32_t(TestConfig::profile)});
+  if (TestConfig::profile >= 0 || activeProfileKnown) {
+    const int32_t target = TestConfig::profile >= 0 ? TestConfig::profile : int32_t(activeProfile);
+    run({"UP / laboratory profile", Op::ProfileSet, target});
+    run({"UP / readback", Op::ProfileGet, target});
+  } else {
+    notRun += 2;
+    log("NOT_RUN name=UP_set_and_readback reason=no_valid_profile_query\r\n");
+  }
   run({"UP / reject 8", Op::ProfileSet, 8, nullptr, 0, Expect::ParserRangeError});
   run({"ZADR / query", Op::RateGet, -1});
   run({"ZADR / HDR", Op::RateSet, 1});
@@ -701,3 +747,5 @@ void runAtFinalTest(bool bootloader) {
   run({bootloader ? "SBTL / manual final test" : "PD / manual final test",
        bootloader ? Op::Bootloader : Op::PowerDown, 0, nullptr, 0, Expect::NoReply});
 }
+
+bool atTestLogInterrupted() { return logLost; }
