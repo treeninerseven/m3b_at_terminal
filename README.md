@@ -217,3 +217,12 @@ CASE 50 等待约 12.6 秒直到 A_ACTIVE:0，后续不再出现 INFO:-7；100 �
 当前客户端的 MALO 会等待完整的状态、短地址和 link options；MDLO 会在成功后接收可选事件，直到读取回调超时。无状态事件时返回 OK、MSTA=255（未知），发生错误时保持原输出。测试器明确检查无事件时的 255，模拟器覆盖成功码先到、状态延迟到达以及无事件的情况。
 
 本固件读取回调使用每条命令的总期限（普通命令 5 秒）；MDLO 成功后可能等待到该期限，日志中的一次 read timeout 可属于正常的可选事件等待结束。没有网关，主机模拟与编译不能证明实板状态及无线功能。
+
+## 同时保留的原始串口直通版
+
+- 自动测试版源码：本目录；编译 `python3 build.py`，产物 `build/m3b_v3_autotest.bin`。
+- 原始直通版源码：`original_terminal/m3b_at_terminal/`；编译 `python3 build_terminal.py`，产物 `build/m3b_at_terminal.bin`。
+
+两份 BIN 和构建目录分别保存。原始直通版源码与初始导入提交 `92eff93` 一致，
+不自动运行测试，无启动提示；串口输入完整 AT 命令并回车即可转发，RF 回复原样显示。
+详细说明见 `original_terminal/README.md`。
