@@ -366,15 +366,15 @@ bool checkOutputs(const Step &s) {
     case Op::LocalAttach:
     case Op::LocalDetach:
     case Op::OtaAttach: {
-      log("API MSTA=%u (255=untouched)\r\n", values.state);
+      log("API MSTA=%u (255=unknown for local detach; otherwise untouched)\r\n", values.state);
       // Only fields available by API return can be expected in this output.
       int64_t state;
       if (TestProtocol::integer({trace.rx, trace.apiRxSize}, "MAC_ATTACHSTATE", state))
         return state == values.state;
       View optionalState;
       if (s.op == Op::LocalDetach && !TestProtocol::field(rxView(), "MAC_ATTACHSTATE", optionalState)) {
-        log("CHECK MDLO omitted optional state event; MSTA is not verifiable from this reply\r\n");
-        return true;
+        log("CHECK MDLO omitted optional state event; MSTA must be 255 (unknown)\r\n");
+        return values.state == 255;
       }
       if (s.op != Op::OtaAttach) {
         log("CHECK FAIL local state arrived after API return or is missing\r\n"); return false;

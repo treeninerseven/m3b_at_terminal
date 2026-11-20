@@ -77,7 +77,7 @@ void respond() {
   else if (command == "AT-MTRX?\x1A\r") reply(hardwareEdges ? "MTRX:242\r\n0\r\n" : "MTRX:245\r\n0\r\n");
   else if (command.find("AT-MALO=") == 0) {
     if (attached) info(-4);
-    else { attached = true; reply("-MAC_ATTACHSTATE:2\r\n-MAC_SHORTADDRESS:2\t1234\r\n-MAC_LINKOPTIONS:2\t0000\r\n0\r\n"); }
+    else { attached = true; reply("0\r\n"); reply("-MAC_ATTACHSTATE:2\r\n-MAC_SHORTADDRESS:2\t1234\r\n-MAC_LINKOPTIONS:2\t0000\r\n", 20); }
   } else if (command == "AT-MDLO\r") {
     const bool wasAttached = attached;
     attached = false; reply("0\r\n");
@@ -151,13 +151,13 @@ int main(int argc, char **argv) {
     assert(transcript.find("end_to_end=NOT_VERIFIED") != std::string::npos);
     assert(transcript.find("stopped=0") != std::string::npos);
     assert(transcript.find("SUITE_END cases=67 not_run=0") != std::string::npos);
-    assert(transcript.find(hardwareEdges ? "SUMMARY PASS=61" : "SUMMARY PASS=60") != std::string::npos);
-    assert(transcript.find(hardwareEdges ? "SUMMARY FAIL=6" : "SUMMARY FAIL=7") != std::string::npos);
+    assert(transcript.find("SUMMARY PASS=62") != std::string::npos);
+    assert(transcript.find("SUMMARY FAIL=5") != std::string::npos);
     if (hardwareEdges) {
       assert(transcript.find("available=242 expect_capacity_error=1") != std::string::npos);
       assert(transcript.find("RESULT case=54 verdict=PASS") != std::string::npos);
       assert(transcript.find("MDLO omitted optional state event") != std::string::npos);
-      assert(transcript.find("RESULT case=61 verdict=FAIL") != std::string::npos); // Late state must still be detected.
+      assert(transcript.find("RESULT case=61 verdict=PASS") != std::string::npos); // Delayed state must be read before API return.
       assert(transcript.find("RESULT case=67 verdict=PASS") != std::string::npos);
     }
     assert(transcript.find("value=1 payload_length=0\r\nTIME") != std::string::npos);
