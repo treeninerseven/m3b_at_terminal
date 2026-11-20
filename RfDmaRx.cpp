@@ -11,7 +11,6 @@ volatile uint32_t dmaWraps = 0;
 volatile bool dmaBroken = false;
 uint32_t consumed = 0;
 serial_t *receiver = nullptr;
-volatile RfRxStats stats = {};
 
 } // namespace
 
@@ -72,7 +71,6 @@ void drainDma(uint32_t produced)
   if (available >= DMA_SIZE) {
     // The oldest bytes may already be overwritten. Discard this entire unread
     // interval rather than returning a possibly torn response.
-    stats.overwrittenBytes += available;
     consumed = produced;
     return;
   }
@@ -93,10 +91,8 @@ void pollRfDmaRx()
   if (!receiver || dmaBroken) return;
   UART_HandleTypeDef *uart = SerialMioty.getHandle();
   // ICR error-clear bits match ISR positions. Clear ORE so RX can continue.
-  const uint32_t errors = uart->Instance->ISR &
+  uart->Instance->ICR = uart->Instance->ISR &
       (USART_ISR_ORE | USART_ISR_FE | USART_ISR_NE | USART_ISR_PE);
-  if (errors) ++stats.uartErrors;
-  uart->Instance->ICR = errors;
   drainDma(producedBytes());
 }
 
@@ -109,11 +105,8 @@ extern "C" void DMA1_Channel2_3_IRQHandler(void)
     DMA1->IFCR = DMA_IFCR_CGIF3;
     if (flags & DMA_ISR_TCIF3) ++dmaWraps;
     if (flags & DMA_ISR_TEIF3) {
-      ++stats.dmaErrors;
       dmaBroken = true;
       CLEAR_BIT(DMA1_Channel3->CCR, DMA_CCR_EN);
     }
   }
 }
-
-RfRxStats rfRxStats() { return {stats.uartErrors, stats.overwrittenBytes, stats.dmaErrors}; }
