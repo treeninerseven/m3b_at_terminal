@@ -34,7 +34,7 @@ def main():
     result = ROOT / 'build/m3b_at_terminal.bin'
     shutil.copy2(build / 'firmware/m3b_at_terminal.ino.bin', result)
     manifest = {
-        'original_source_commit': '92eff93e5d4fb3d868ed974ed2744a2cfab6d3e5',
+        'clock_configuration': 'Arduino STM32 core default (GENERIC_L072RBTX)',
         'source_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                           for p in sorted(sketch.iterdir()) if p.is_file() and p.suffix in {'.ino', '.cpp', '.h'}},
         'firmware_sha256': hashlib.sha256(result.read_bytes()).hexdigest(),

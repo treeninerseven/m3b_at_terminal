@@ -1,7 +1,8 @@
 # 菜单 14：基本 AT 终端
 
 通过电脑 USB 终端输入 AT 命令，STM32 转发给 RF 模块，并原样显示模块回复。
-固定使用内部 HSI16 → PLL → 32 MHz，RF 为 PC10 TX / PC11 RX、921600 8N1，
+使用 Arduino STM32 core 3.0.0 的默认时钟配置（GENERIC_L072RBTX），
+RF 为 PC10 TX / PC11 RX、921600 8N1，
 电脑 USB CDC 终端设为 115200。
 
 ## 使用
@@ -33,7 +34,6 @@ CR、LF、CRLF 均可结束一行，固件在命令末尾添加一个 CR。
 - m3b_at_terminal.ino：USB 输入、按行发送和原始回复转发。
 - TerminalCore.h：转义解码及 CR 结尾。
 - RfDmaRx.cpp / RfDmaRx.h：DMA 循环接收，由 setup 初始化、loop 轮询。
-- ClockConfig.cpp：内部 HSI16 和独立 USB HSI48 时钟。
 - build_opt.h：Arduino 串口接收缓冲区大小。
 
 DMA 使用 DMA1 通道 3、请求 5、2048 字节循环区及其共享中断，通道 2 未使用。
@@ -44,3 +44,6 @@ USB 输出暂满时缓存在内存中，长时间不读取仍可能丢数据。
 
 - `master`：串口直通版，手动输入完整 AT 命令，不自动测试。
 - `autotest`：V3 客户端自动测试版，使用该分支的 `python3 build.py` 构建，详见该分支 README。
+
+当前 `master` 使用 Arduino 默认 `SystemClock_Config()`，未提供自定义时钟覆盖。
+默认时钟版需重新烧录，验证 USB 枚举及 RF 串口命令回复；编译通过不代表实板验证通过。
