@@ -36,7 +36,7 @@ struct Step {
 };
 TestCapture &trace = firmwareBuffers.capture;
 struct Outputs {
-  char text[192];
+  char text[200];
   uint32_t integer, counter, ota, groups;
   uint8_t bytes[255], length, state, address[2], options[2];
 } values;
@@ -313,10 +313,18 @@ bool compareInt(const char *key, uint32_t output, bool signedValue = false) {
 
 bool checkOutputs(const Step &s) {
   switch (s.op) {
-    case Op::Info:
+    case Op::Info: {
+      log("API text="); escaped(reinterpret_cast<uint8_t *>(values.text), strlen(values.text));
+      log("\r\n");
+      if (strlen(values.text) != trace.readCursor ||
+          memcmp(values.text, trace.rx, trace.readCursor) != 0) {
+        log("CHECK FAIL ATI full response differs from bytes delivered to API\r\n"); return false;
+      }
+      return true;
+    }
     case Op::LibVersion: {
       View field;
-      const char *key = s.op == Op::Info ? "I" : "LIBV";
+      const char *key = "LIBV";
       log("API text="); escaped(reinterpret_cast<uint8_t *>(values.text), strlen(values.text));
       log("\r\n");
       if (!TestProtocol::field(rxView(), key, field) || !field.equals(values.text)) {
@@ -665,7 +673,7 @@ void runAtTests() {
   log("\r\n=== MIOTY_V3_SUITE_BEGIN protocol=3.0.0-12 build=%s_%s ===\r\n", __DATE__, __TIME__);
   log("CONFIG RF=%lu 8N1 PC10=TX PC11=RX HSI+DMA USB=115200\r\n", (unsigned long)TestConfig::rfBaud);
   log("CONFIG dedicated laboratory device; public test key; factory resets enabled; gateway=NO\r\n");
-  log("NOTE ABI client enum=0..25,100; no client source modifications; raw data preserves case/CR/LF/SUB\r\n");
+  log("NOTE ABI client enum=0..25,100; ATI returns complete raw reply; raw data preserves case/CR/LF/SUB\r\n");
   log("CLIENT git=%s (see build/manifest.json for source hash)\r\n", TEST_STRING(CLIENT_REV));
   // Existing manual-mode output is drained before runAtTests is entered.
   run({"RST / no final reply required", Op::Reset});

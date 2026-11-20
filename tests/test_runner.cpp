@@ -144,15 +144,16 @@ int main(int argc, char **argv) {
   if (!missingReply && !simulateOverflow) {
     assert(commands.size() >= 65);
     assert(transcript.find("SUMMARY FAIL=") != std::string::npos);
-    assert(transcript.find("CHECK FAIL string differs from raw response") != std::string::npos);
+    assert(transcript.find("API text=-I:Fraunhofer IIS;TestModem;") != std::string::npos);
+    assert(transcript.find("CHECK FAIL ATI full response") == std::string::npos);
     assert(transcript.find("API rc=23 name=ATReadFailed") != std::string::npos); // RST
     assert(transcript.find("RAW final=100") != std::string::npos);
     assert(transcript.find("RX_TIME ms=") != std::string::npos);
     assert(transcript.find("end_to_end=NOT_VERIFIED") != std::string::npos);
     assert(transcript.find("stopped=0") != std::string::npos);
     assert(transcript.find("SUITE_END cases=67 not_run=0") != std::string::npos);
-    assert(transcript.find(hardwareEdges ? "SUMMARY PASS=61" : "SUMMARY PASS=60") != std::string::npos);
-    assert(transcript.find(hardwareEdges ? "SUMMARY FAIL=6" : "SUMMARY FAIL=7") != std::string::npos);
+    assert(transcript.find(hardwareEdges ? "SUMMARY PASS=64" : "SUMMARY PASS=63") != std::string::npos);
+    assert(transcript.find(hardwareEdges ? "SUMMARY FAIL=3" : "SUMMARY FAIL=4") != std::string::npos);
     if (hardwareEdges) {
       assert(transcript.find("available=242 expect_capacity_error=1") != std::string::npos);
       assert(transcript.find("RESULT case=54 verdict=PASS") != std::string::npos);
